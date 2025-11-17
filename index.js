@@ -67,24 +67,21 @@ app.post('/gerar-pix', async (req, res) => {
     }
 });
 
-// Endpoint para consultar PIX
+// Endpoint para consultar PIX - FORMATO ORIGINAL QUE FUNCIONAVA
 app.post('/consultar-pix', async (req, res) => {
     console.log('> Recebida requisição para consultar PIX');
     
-    // Pegar o token do header Authorization
-    const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-        console.log('> ERRO: Token de autorização não fornecido no header');
-        return res.status(401).json({ error: 'Token de autorização é obrigatório no header Authorization' });
-    }
-    const bearerToken = authHeader.substring(7); // Remove 'Bearer ' do início
-    
-    // Pegar os dados do body
-    const { tokenLink } = req.body;
+    // Pegar os dados do body com formato ORIGINAL que funcionava
+    const { tokenLink, bearerToken } = req.body;
     
     if (!tokenLink) {
         console.log('> ERRO: tokenLink não fornecido');
         return res.status(400).json({ error: 'tokenLink é obrigatório' });
+    }
+    
+    if (!bearerToken) {
+        console.log('> ERRO: bearerToken não fornecido');
+        return res.status(400).json({ error: 'bearerToken é obrigatório' });
     }
     
     const fixPayUrl = `https://pix.fixpay.com.br:3467/v1/consult_pix/${tokenLink}`;
@@ -118,24 +115,21 @@ app.post('/consultar-pix', async (req, res) => {
     }
 });
 
-// Endpoint para expirar PIX
+// Endpoint para expirar PIX - FORMATO ORIGINAL QUE FUNCIONAVA
 app.post('/expirar-pix', async (req, res) => {
     console.log('> Recebida requisição para expirar PIX');
     
-    // Pegar o token do header Authorization
-    const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-        console.log('> ERRO: Token de autorização não fornecido no header');
-        return res.status(401).json({ error: 'Token de autorização é obrigatório no header Authorization' });
-    }
-    const bearerToken = authHeader.substring(7); // Remove 'Bearer ' do início
-    
-    // Pegar os dados do body
-    const { tokenLink } = req.body;
+    // Pegar os dados do body com formato ORIGINAL que funcionava
+    const { tokenLink, bearerToken } = req.body;
     
     if (!tokenLink) {
         console.log('> ERRO: tokenLink não fornecido');
         return res.status(400).json({ error: 'tokenLink é obrigatório' });
+    }
+    
+    if (!bearerToken) {
+        console.log('> ERRO: bearerToken não fornecido');
+        return res.status(400).json({ error: 'bearerToken é obrigatório' });
     }
     
     const fixPayUrl = `https://pix.fixpay.com.br:3467/v1/expire/${tokenLink}`;
