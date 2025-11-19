@@ -1,33 +1,108 @@
 const express = require('express');
 const axios = require('axios');
+const https = require('https');
 const app = express();
+
 const PORT = 3001;
+
+// =========================
+// CONFIG Z-API
+// =========================
+const ZAPI_BASE = "https://api.z-api.io";
+const CLIENT_TOKEN = "F64cd81764d544c9fb148dbb662053ee6S";
 
 app.use(express.json());
 
-// Endpoint para gerar PIX
+/* ======================================================
+   PROXY Z-API /zap
+====================================================== */
+app.use('/zap', async (req, res) => {
+    try {
+        // Remove /zap e caracteres problemáticos (%0A, %0D, \n, \r)
+        const cleanPath = req.url
+            .replace(/^\/zap/, '')
+            .replace(/%0A|%0D|\n|\r/gi, '')
+            .trim();
+
+        const targetUrl = new URL(cleanPath, ZAPI_BASE);
+
+        console.log("======================================");
+        console.log("➡️ NOVA REQUISIÇÃO PARA Z-API");
+        console.log("➡️ URL Limpada:", cleanPath);
+        console.log("➡️ URL Final:", targetUrl.toString());
+        console.log("➡️ Body:", req.body);
+
+        const headers = {
+            "content-type": "application/json",
+            "client-token": CLIENT_TOKEN,
+            "value": req.headers["value"]
+        };
+
+        console.log("➡️ Headers enviados:", headers);
+
+        const options = {
+            method: req.method,
+            headers
+        };
+
+        const proxyReq = https.request(targetUrl, options, proxyRes => {
+            let chunks = [];
+
+            proxyRes.on('data', chunk => chunks.push(chunk));
+            proxyRes.on('end', () => {
+                const body = Buffer.concat(chunks).toString();
+
+                console.log("⬅️ Resposta da Z-API:");
+                console.log("Status:", proxyRes.statusCode);
+                console.log("Body:", body);
+
+                res.status(proxyRes.statusCode).send(body);
+            });
+        });
+
+        proxyReq.on('error', err => {
+            console.log("❌ Erro no proxy:", err.message);
+            return res.status(502).json({ error: 'proxy_error', message: err.message });
+        });
+
+        if (["POST", "PUT", "PATCH"].includes(req.method)) {
+            proxyReq.write(JSON.stringify(req.body));
+        }
+
+        proxyReq.end();
+
+    } catch (err) {
+        console.log("❌ Erro geral no proxy:", err.message);
+        return res.status(500).json({ error: 'proxy_setup_error', message: err.message });
+    }
+});
+
+/* ============================================================== 
+   ENDPOINTS FIXPAY 
+============================================================== */
+
+// 1) GERAR PIX
 app.post('/gerar-pix', async (req, res) => {
     console.log('> Recebida requisição para gerar PIX');
-    
-    // Pegar o token do header Authorization
+
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
-        console.log('> ERRO: Token de autorização não fornecido no header');
-        return res.status(401).json({ error: 'Token de autorização é obrigatório no header Authorization' });
+        console.log('> ERRO: Token de autorização não fornecido');
+        return res.status(401).json({ error: 'Token de autorização é obrigatório' });
     }
-    const bearerToken = authHeader.substring(7); // Remove 'Bearer ' do início
-    
-    // Pegar os dados do body
+
+    const bearerToken = authHeader.substring(7);
+
     const { value, message, partner_id, captura_id, usuario, usuario_id, user_email } = req.body;
-    
+
     if (!value || !partner_id || !captura_id) {
-        console.log('> ERRO: Parâmetros obrigatórios não fornecidos');
-        console.log('> Body recebido:', JSON.stringify(req.body));
+        console.log('> ERRO: Parâmetros obrigatórios faltando');
         return res.status(400).json({ error: 'value, partner_id e captura_id são obrigatórios' });
     }
-    
+
     const fixPayUrl = 'https://pix.fixpay.com.br:3467/v1/generate_pix';
-    const requestBody = {
+
+    const body = {
         value,
         message: message || 'PIX Gerado via Proxy',
         partner_id,
@@ -38,135 +113,105 @@ app.post('/gerar-pix', async (req, res) => {
     };
 
     try {
+        console.log('> Enviando para FixPay:', fixPayUrl);
+        console.log('> Body:', body);
+
         const config = {
             headers: {
                 'Authorization': `Bearer ${bearerToken}`,
-                'User-Agent': 'NodeJS-Proxy-Client/1.0',
                 'Content-Type': 'application/json'
-            },
-            timeout: 15000 
+            }
         };
-        
-        console.log('> Enviando requisição para gerar PIX na FixPay...');
-        console.log('> Dados:', JSON.stringify(requestBody));
-        const fixPayResponse = await axios.post(fixPayUrl, requestBody, config);
 
-        console.log(`> SUCESSO! PIX gerado com status: ${fixPayResponse.status}`);
-        return res.status(fixPayResponse.status).json(fixPayResponse.data);
+        const response = await axios.post(fixPayUrl, body, config);
+
+        console.log('> SUCESSO! Resposta FixPay:', response.data);
+        res.status(response.status).json(response.data);
 
     } catch (error) {
-        console.log('> ERRO ao gerar PIX:', error.message);
-        if (error.code === 'ECONNABORTED') {
-            return res.status(408).json({ error: 'Timeout na requisição para gerar PIX' });
-        }
+        console.log('> ERRO FixPay:', error.message);
+
         if (error.response) {
-            console.log(`> FixPay respondeu com erro: ${error.response.status}`);
             return res.status(error.response.status).json(error.response.data);
         }
-        return res.status(500).json({ error: 'Erro interno do servidor' });
+
+        res.status(500).json({ error: 'Erro interno' });
     }
 });
 
-// Endpoint para consultar PIX - FORMATO ORIGINAL QUE FUNCIONAVA
+// 2) CONSULTAR PIX
 app.post('/consultar-pix', async (req, res) => {
     console.log('> Recebida requisição para consultar PIX');
-    
-    // Pegar os dados do body com formato ORIGINAL que funcionava
+
     const { tokenLink, bearerToken } = req.body;
-    
-    if (!tokenLink) {
-        console.log('> ERRO: tokenLink não fornecido');
-        return res.status(400).json({ error: 'tokenLink é obrigatório' });
+
+    if (!tokenLink || !bearerToken) {
+        return res.status(400).json({ error: 'tokenLink e bearerToken são obrigatórios' });
     }
-    
-    if (!bearerToken) {
-        console.log('> ERRO: bearerToken não fornecido');
-        return res.status(400).json({ error: 'bearerToken é obrigatório' });
-    }
-    
+
     const fixPayUrl = `https://pix.fixpay.com.br:3467/v1/consult_pix/${tokenLink}`;
 
     try {
         const config = {
             headers: {
                 'Authorization': `Bearer ${bearerToken}`,
-                'User-Agent': 'NodeJS-Proxy-Client/1.0',
                 'Content-Type': 'application/json'
-            },
-            timeout: 15000 
+            }
         };
-        
-        console.log('> Enviando requisição para consultar PIX na FixPay...');
-        const fixPayResponse = await axios.get(fixPayUrl, config);
 
-        console.log(`> SUCESSO! PIX consultado com status: ${fixPayResponse.status}`);
-        return res.status(fixPayResponse.status).json(fixPayResponse.data);
+        console.log('> Consultando FixPay:', fixPayUrl);
+
+        const response = await axios.get(fixPayUrl, config);
+
+        return res.status(response.status).json(response.data);
 
     } catch (error) {
-        console.log('> ERRO ao consultar PIX:', error.message);
-        if (error.code === 'ECONNABORTED') {
-            return res.status(408).json({ error: 'Timeout na requisição para consultar PIX' });
-        }
-        if (error.response) {
-            console.log(`> FixPay respondeu com erro: ${error.response.status}`);
+        if (error.response)
             return res.status(error.response.status).json(error.response.data);
-        }
-        return res.status(500).json({ error: 'Erro interno do servidor' });
+
+        return res.status(500).json({ error: 'Erro interno' });
     }
 });
 
-// Endpoint para expirar PIX - FORMATO ORIGINAL QUE FUNCIONAVA
+// 3) EXPIRAR PIX
 app.post('/expirar-pix', async (req, res) => {
     console.log('> Recebida requisição para expirar PIX');
-    
-    // Pegar os dados do body com formato ORIGINAL que funcionava
+
     const { tokenLink, bearerToken } = req.body;
-    
-    if (!tokenLink) {
-        console.log('> ERRO: tokenLink não fornecido');
-        return res.status(400).json({ error: 'tokenLink é obrigatório' });
+
+    if (!tokenLink || !bearerToken) {
+        return res.status(400).json({ error: 'tokenLink e bearerToken são obrigatórios' });
     }
-    
-    if (!bearerToken) {
-        console.log('> ERRO: bearerToken não fornecido');
-        return res.status(400).json({ error: 'bearerToken é obrigatório' });
-    }
-    
+
     const fixPayUrl = `https://pix.fixpay.com.br:3467/v1/expire/${tokenLink}`;
 
     try {
-        const config = {
+        console.log('> Expirando PIX na FixPay:', fixPayUrl);
+
+        const response = await axios.post(fixPayUrl, {}, {
             headers: {
                 'Authorization': `Bearer ${bearerToken}`,
-                'User-Agent': 'NodeJS-Proxy-Client/1.0',
                 'Content-Type': 'application/json'
-            },
-            timeout: 15000 
-        };
-        
-        console.log(`> Enviando requisição para expirar PIX: ${fixPayUrl}`);
-        const fixPayResponse = await axios.post(fixPayUrl, {}, config);
+            }
+        });
 
-        console.log(`> SUCESSO! PIX expirado com status: ${fixPayResponse.status}`);
-        return res.status(fixPayResponse.status).json(fixPayResponse.data);
+        res.status(response.status).json(response.data);
 
     } catch (error) {
-        console.log('> ERRO ao expirar PIX:', error.message);
-        if (error.code === 'ECONNABORTED') {
-            return res.status(408).json({ error: 'Timeout na requisição para expirar PIX' });
-        }
-        if (error.response) {
-            console.log(`> FixPay respondeu com erro: ${error.response.status}`);
+        if (error.response)
             return res.status(error.response.status).json(error.response.data);
-        }
-        return res.status(500).json({ error: 'Erro interno do servidor' });
+
+        return res.status(500).json({ error: 'Erro interno' });
     }
 });
 
+/* ============================================================== */
+
 app.listen(PORT, () => {
-    console.log(`Serviço de proxy para FixPay iniciado na porta ${PORT}.`);
-    console.log('Endpoints disponíveis:');
-    console.log('  POST /gerar-pix');
-    console.log('  POST /consultar-pix');
-    console.log('  POST /expirar-pix');
+    console.log(`Servidor rodando na porta ${PORT}`);
+    console.log("Endpoints:");
+    console.log("  🔹 /zap → Proxy Z-API");
+    console.log("  🔹 POST /gerar-pix");
+    console.log("  🔹 POST /consultar-pix");
+    console.log("  🔹 POST /expirar-pix");
 });
