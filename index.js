@@ -32,10 +32,13 @@ app.use('/zap', async (req, res) => {
         console.log("➡️ URL Final:", targetUrl.toString());
         console.log("➡️ Body:", req.body);
 
+        const valueHeader = req.headers["value"] || "";
+
         const headers = {
             "content-type": "application/json",
             "client-token": CLIENT_TOKEN,
-            "value": req.headers["value"]
+            "value": '',
+            
         };
 
         console.log("➡️ Headers enviados:", headers);
